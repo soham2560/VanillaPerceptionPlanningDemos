@@ -1,2 +1,2 @@
-# VanillaMonocularSLAMDemo
-A Demo of a Vanilla MonocularSLAM Pipeline for educational purposes
+# VanillaPerceptionPlanningDemos
+Demos for some Vanilla Perception and Planning algorithms for educational purposes
