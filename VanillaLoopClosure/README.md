@@ -6,7 +6,6 @@ The anaconda environment used to run this notebook can be created using [environ
 ```bash
     conda env create -f environment.yml
 ```
-You will also need to build `g2o`, instructions can be found in [g2o.ipynb](./g2o.ipynb)
-After that be sure to replace the 
+You will also need to build `g2o`, instructions can be found in [g2o.ipynb](./g2o.ipynb).
 
 It is suggested that you use VSCode to run the cells, but they should work using standard jupyter notebook also.
