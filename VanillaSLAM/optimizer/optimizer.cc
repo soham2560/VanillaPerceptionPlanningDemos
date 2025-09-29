@@ -180,6 +180,20 @@ struct LidarPointError {
     std::array<double,3> observed_;
 };
 
+class IterationDataSaverCallback : public ceres::IterationCallback {
+public:
+    explicit IterationDataSaverCallback(const LidarSlamProblem* problem_data)
+        : problem_data_(problem_data) {}
+    ceres::CallbackReturnType operator()(const ceres::IterationSummary& summary) override {
+        std::string filename = "intermediate_results_iter_" + std::to_string(summary.iteration) + ".json";
+        problem_data_->WriteToFile(filename);
+        return ceres::SOLVER_CONTINUE;
+    }
+
+private:
+    const LidarSlamProblem* problem_data_;
+};
+
 int main(int argc, char** argv) {
     if (argc != 2) {
         std::cerr << "Usage: " << argv[0] << " <path_to_lidar_problem.json>\n";
@@ -222,6 +236,9 @@ int main(int argc, char** argv) {
     options.max_num_iterations = 500;
     options.num_threads = std::max(1u, std::thread::hardware_concurrency());
     options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+    IterationDataSaverCallback callback(&problem_data);
+    options.callbacks.push_back(&callback);
+    options.update_state_every_iteration = true;
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);

@@ -14,8 +14,11 @@ python data_collector.py --visualize
 python initial_estimator.py --visualize
 ```
 ```bash
+cmake --build optimizer/build
+```
+```bash
 ./optimizer/build/optimizer ./slam_data/optimization_problem.json
 ```
 ```bash
-python data_collector.py --visualize
+python iterations_visualizer.py
 ```
