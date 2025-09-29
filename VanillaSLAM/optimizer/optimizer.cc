@@ -10,33 +10,13 @@
 #include <sophus/se3.hpp>
 #include "ceres/ceres.h"
 #include "json.hpp"
+#include <filesystem>
 
 using json = nlohmann::json;
 using namespace Eigen;
+namespace fs = std::filesystem;
 
-// Convert 4x4 pose matrix (flattened row-major 16-vector) -> SE3 tangent (6-vector)
-void PoseMatrixToSE3Tangent(const std::vector<double>& pose_matrix, double* se3_tangent) {
-    Matrix4d T;
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j)
-            T(i, j) = pose_matrix[i * 4 + j];
-
-    Sophus::SE3d se3_pose(T);
-    Sophus::Vector6d tangent = se3_pose.log();
-    for (int i = 0; i < 6; ++i) se3_tangent[i] = tangent[i];
-}
-
-// Convert SE3 tangent (6-vector) -> 4x4 pose matrix (flattened row-major 16-vector)
-void SE3TangentToPoseMatrix(const double* se3_tangent, std::vector<double>& pose_matrix) {
-    pose_matrix.resize(16);
-    Sophus::Vector6d tangent;
-    for (int i = 0; i < 6; ++i) tangent[i] = se3_tangent[i];
-    Sophus::SE3d se3_pose = Sophus::SE3d::exp(tangent);
-    Matrix4d T = se3_pose.matrix();
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j)
-            pose_matrix[i * 4 + j] = T(i, j);
-}
+const std::string kOutputFolder = "slam_data";
 
 struct LidarSlamProblem {
     int num_poses_ = 0;
@@ -48,7 +28,7 @@ struct LidarSlamProblem {
     std::vector<int> point_indices_;
     std::vector<std::vector<double>> observations_;
 
-    // single contiguous parameter buffer: [poses (num_poses_*6), points (num_points_*3)]
+    // single contiguous parameter buffer: [poses (num_poses_*7), points (num_points_*3)]
     double* parameters_ = nullptr;
 
     LidarSlamProblem() = default;
@@ -57,13 +37,13 @@ struct LidarSlamProblem {
     }
 
     double* mutable_poses() { return parameters_; }
-    double* mutable_points() { return parameters_ + num_poses_ * 6; }
+    double* mutable_points() { return parameters_ + num_poses_ * 7; }
 
-    double* mutable_pose_for_observation(int i) { return mutable_poses() + pose_indices_[i] * 6; }
+    double* mutable_pose_for_observation(int i) { return mutable_poses() + pose_indices_[i] * 7; }
     double* mutable_point_for_observation(int i) { return mutable_points() + point_indices_[i] * 3; }
 
     const double* poses() const { return parameters_; }
-    const double* points() const { return parameters_ + num_poses_ * 6; }
+    const double* points() const { return parameters_ + num_poses_ * 7; }
 
     bool LoadFile(const std::string& filepath) {
         json problem_json;
@@ -80,7 +60,7 @@ struct LidarSlamProblem {
         num_observations_ = problem_json.at("observations").size();
 
         // allocate parameter buffer
-        parameters_ = new double[num_poses_ * 6 + num_points_ * 3];
+        parameters_ = new double[num_poses_ * 7 + num_points_ * 3];
 
         // read poses and names
         pose_names_.resize(num_poses_);
@@ -88,7 +68,24 @@ struct LidarSlamProblem {
             pose_names_[i] = problem_json.at("poses").at(i).at("name").get<std::string>();
             std::vector<double> pose_matrix =
                 problem_json.at("poses").at(i).at("pose").get<std::vector<double>>();
-            PoseMatrixToSE3Tangent(pose_matrix, mutable_poses() + i * 6);
+
+            Eigen::Matrix4d T;
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c)
+                    T(r, c) = pose_matrix[r * 4 + c];
+
+            Sophus::SE3d se3_pose(T);
+            Eigen::Quaterniond q(se3_pose.rotationMatrix());
+            Eigen::Vector3d t = se3_pose.translation();
+
+            double* pose = mutable_poses() + i * 7;
+            pose[0] = q.w();
+            pose[1] = q.x();
+            pose[2] = q.y();
+            pose[3] = q.z();
+            pose[4] = t.x();
+            pose[5] = t.y();
+            pose[6] = t.z();
         }
 
         // read points
@@ -117,8 +114,17 @@ struct LidarSlamProblem {
         json output_data;
         // write poses with original names as keys so visualizer can find them by name
         for (int i = 0; i < num_poses_; ++i) {
-            std::vector<double> pose_matrix;
-            SE3TangentToPoseMatrix(poses() + i * 6, pose_matrix);
+            const double* pose = poses() + i * 7;
+            Eigen::Quaterniond q(pose[0], pose[1], pose[2], pose[3]);
+            Eigen::Vector3d t(pose[4], pose[5], pose[6]);
+            Sophus::SE3d se3_pose(q, t);
+
+            std::vector<double> pose_matrix(16);
+            Eigen::Matrix4d T = se3_pose.matrix();
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c)
+                    pose_matrix[r * 4 + c] = T(r, c);
+
             output_data["poses_optimized"][pose_names_[i]] = pose_matrix;
         }
 
@@ -143,36 +149,29 @@ struct LidarSlamProblem {
 };
 
 // Cost functor: observed point is in sensor frame; parameters are
-// se3_tangent (6) encoding T_world_sensor (t, phi) and world_point (3)
+// quaternion+translation (7) encoding T_world_sensor and world_point (3)
 struct LidarPointError {
     LidarPointError(const std::array<double,3>& observed_xyz)
         : observed_{observed_xyz[0], observed_xyz[1], observed_xyz[2]} {}
 
     template <typename T>
-    bool operator()(const T* const se3_tangent, const T* const world_point, T* residuals) const {
-        using Vec3T = Eigen::Matrix<T, 3, 1>;
-        using SE3T  = Sophus::SE3<T>;
-
-        // map inputs
-        Eigen::Map<const Eigen::Matrix<T,6,1>> xi(se3_tangent);
-        Eigen::Map<const Vec3T> pw(world_point);
-
-        // reconstruct SE3 (T_world_sensor)
-        SE3T T_ws = SE3T::exp(xi);
-
-        // convert world point to sensor frame: p_s = T_sw * p_w = T_ws.inverse() * p_w
-        Vec3T ps = T_ws.inverse() * pw;
-
-        // residual = ps - observed (observed is in sensor coordinates)
-        residuals[0] = ps[0] - T(observed_[0]);
-        residuals[1] = ps[1] - T(observed_[1]);
-        residuals[2] = ps[2] - T(observed_[2]);
-
+    bool operator()(const T* const pose, const T* const world_point, T* residuals) const {
+        const Eigen::Quaternion<T> q(pose[0], pose[1], pose[2], pose[3]);
+        Eigen::Map<const Eigen::Matrix<T,3,1>> t(pose + 4);
+        Sophus::SE3<T> T_ws(q, t);
+        Eigen::Map<const Eigen::Matrix<T,3,1>> pw(world_point);
+        Eigen::Matrix<T,3,1> ps_observed;
+        ps_observed << T(observed_[0]), T(observed_[1]), T(observed_[2]);
+        Eigen::Matrix<T,3,1> pw_predicted = T_ws * ps_observed;
+        residuals[0] = pw_predicted[0] - pw[0];
+        residuals[1] = pw_predicted[1] - pw[1];
+        residuals[2] = pw_predicted[2] - pw[2];
         return true;
     }
 
+
     static ceres::CostFunction* Create(const std::array<double,3>& observed_xyz) {
-        return new ceres::AutoDiffCostFunction<LidarPointError, 3, 6, 3>(
+        return new ceres::AutoDiffCostFunction<LidarPointError, 3, 7, 3>(
             new LidarPointError(observed_xyz)
         );
     }
@@ -185,7 +184,7 @@ public:
     explicit IterationDataSaverCallback(const LidarSlamProblem* problem_data)
         : problem_data_(problem_data) {}
     ceres::CallbackReturnType operator()(const ceres::IterationSummary& summary) override {
-        std::string filename = "intermediate_results_iter_" + std::to_string(summary.iteration) + ".json";
+        std::string filename = kOutputFolder + "/solver_iterations/intermediate_results_iter_" + std::to_string(summary.iteration) + ".json";
         problem_data_->WriteToFile(filename);
         return ceres::SOLVER_CONTINUE;
     }
@@ -205,6 +204,15 @@ int main(int argc, char** argv) {
         std::cerr << "Failed to load problem file.\n";
         return 1;
     }
+    
+    const std::string iter_folder = kOutputFolder + "/solver_iterations";
+    if (fs::exists(iter_folder)) {
+        for (auto& entry : fs::directory_iterator(iter_folder)) {
+            fs::remove_all(entry.path());
+        }
+    } else {
+        fs::create_directory(iter_folder);
+    }
 
     ceres::Problem problem;
 
@@ -219,14 +227,22 @@ int main(int argc, char** argv) {
 
         ceres::CostFunction* cost_function = LidarPointError::Create(observed_xyz);
 
-        double* pose_param = problem_data.mutable_pose_for_observation(i);   // pointer to 6 doubles
-        double* point_param = problem_data.mutable_point_for_observation(i); // pointer to 3 doubles
+        double* pose_param = problem_data.mutable_pose_for_observation(i);
+        double* point_param = problem_data.mutable_point_for_observation(i);
 
         problem.AddResidualBlock(cost_function, loss_function, pose_param, point_param);
     }
+    
+    // Set manifolds for quaternion+translation parameterization
+    for (int i = 0; i < problem_data.num_poses_; ++i) {
+        double* pose_param = problem_data.mutable_poses() + i * 7;
+        ceres::Manifold* se3_manifold =
+            new ceres::ProductManifold<ceres::QuaternionManifold, ceres::EuclideanManifold<3>>();
+        problem.SetManifold(pose_param, se3_manifold);
+    }
 
     if (problem_data.num_poses_ > 0) {
-        problem.SetParameterBlockConstant(problem_data.mutable_poses() + 0 * 6);
+        problem.SetParameterBlockConstant(problem_data.mutable_poses() + 0 * 7);
     }
 
     // Solver options
@@ -244,8 +260,7 @@ int main(int argc, char** argv) {
     ceres::Solve(options, &problem, &summary);
     std::cout << summary.FullReport() << "\n";
 
-    // write optimized result
-    problem_data.WriteToFile("lidar_slam_optimized.json");
+    problem_data.WriteToFile(kOutputFolder + "/lidar_slam_optimized.json");
 
     return 0;
 }

@@ -9,8 +9,6 @@ import glob
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Visualize the SLAM optimization process iteration by iteration.")
     parser.add_argument("--data_dir", type=str, default="slam_data", help="Directory for GT and initial problem data.")
-    # This now correctly points to where the C++ program saves the final file by default
-    parser.add_argument("--final_result_file", type=str, default="optimizer/build/optimized_results.json", help="Path to the final optimized result file.")
     return parser.parse_args()
 
 def load_trajectory_and_map(file_path, frame_names):
@@ -18,7 +16,6 @@ def load_trajectory_and_map(file_path, frame_names):
     with open(file_path, 'r') as f:
         data = json.load(f)
     
-    # Unified logic to handle initial, intermediate, and final file formats
     poses = data.get("poses_optimized") or (
         {item['name']: item['pose'] for item in data.get("poses", [])}
     )
@@ -53,14 +50,8 @@ def main():
     gt_line.paint_uniform_color([0.0, 0.8, 0.0])
 
     print("Finding and loading all result files...")
-    # --- CHANGE: Look in the CURRENT directory for intermediate files ---
-    search_pattern = "intermediate_results_iter_*.json"
+    search_pattern = "slam_data/solver_iterations/intermediate_results_iter_*.json"
     iteration_files = sorted(glob.glob(search_pattern), key=lambda x: int(Path(x).stem.split('_')[-1]))
-    
-    # Add the final result file to the list
-    final_result_file = Path(args.final_result_file)
-    if final_result_file.exists():
-        iteration_files.append(str(final_result_file))
     
     if not iteration_files:
         print(f"Error: No result files found matching '{search_pattern}' in the current directory.")

@@ -10,7 +10,7 @@ def parse_arguments():
     parser.add_argument("--data_dir", type=str, default="slam_data", help="Directory containing the ground truth data.")
     parser.add_argument("--noise_std_dev", type=float, default=0.0105, help="Standard deviation of Gaussian noise added to scans.")
     parser.add_argument("--icp_max_correspondence", type=float, default=0.1, help="Max correspondence distance for ICP.")
-    parser.add_argument("--output_file", type=str, default="optimization_problem.json", help="Final output file for the C++ optimizer.")
+    parser.add_argument("--output_file", type=str, default="initial_estimates.json", help="Final output file for the C++ optimizer.")
     parser.add_argument("--visualize", action="store_true", help="Display an interactive visualization to switch between GT and Estimate.")
     parser.add_argument("--averaging_window_size", type=int, default=5, help="Number of recent frames to average for each map point.")
     return parser.parse_args()
