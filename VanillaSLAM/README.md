@@ -17,7 +17,7 @@ python initial_estimator.py --visualize
 cmake --build optimizer/build
 ```
 ```bash
-./optimizer/build/optimizer ./slam_data/optimization_problem.json
+./optimizer/build/optimizer ./slam_data/initial_estimates.json
 ```
 ```bash
 python iterations_visualizer.py
