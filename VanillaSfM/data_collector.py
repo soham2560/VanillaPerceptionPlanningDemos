@@ -38,16 +38,22 @@ def generate_camera_poses(num_poses, center, radius):
     poses = []
     distance_scale = 2.5
     
-    for _ in range(num_poses):
-        phi = np.random.uniform(0, np.pi * 2)
-        costheta = np.random.uniform(-1, 1)
-        theta = np.arccos(costheta)
+    base_radius = radius * distance_scale
+    radial_deviation = base_radius * 0.15 * (10 / num_poses)
+    height_deviation = base_radius * 0.2 * (10 / num_poses)
+    angular_deviation = 0.1 * (10 / num_poses)
+    for i in range(num_poses):
+        base_angle = (i / num_poses) * 2 * np.pi
+        angle_offset = angular_deviation * np.sin(3 * base_angle + np.random.uniform(-0.5, 0.5))
+        angle = base_angle + angle_offset
+        distance_variation = radial_deviation * (np.cos(4 * base_angle) + 0.3 * np.random.uniform(-1, 1))
+        current_radius = base_radius + distance_variation
+        x = current_radius * np.cos(angle)
+        z = current_radius * np.sin(angle)
+        height_variation = height_deviation * (np.sin(2 * base_angle) + 0.3 * np.random.uniform(-1, 1))
+        y = height_variation
         
-        x = np.sin(theta) * np.cos(phi)
-        y = np.sin(theta) * np.sin(phi)
-        z = np.cos(theta)
-        
-        camera_pos = center + np.array([x, y, z]) * radius * distance_scale
+        camera_pos = center + np.array([x, y, z])
         
         R = create_look_at_matrix(camera_pos, center)
         t = -R @ camera_pos
