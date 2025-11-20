@@ -169,7 +169,6 @@ struct LidarPointError {
         return true;
     }
 
-
     static ceres::CostFunction* Create(const std::array<double,3>& observed_xyz) {
         return new ceres::AutoDiffCostFunction<LidarPointError, 3, 7, 3>(
             new LidarPointError(observed_xyz)
@@ -178,6 +177,8 @@ struct LidarPointError {
 
     std::array<double,3> observed_;
 };
+
+
 
 class IterationDataSaverCallback : public ceres::IterationCallback {
 public:
@@ -252,8 +253,8 @@ int main(int argc, char** argv) {
     options.max_num_iterations = 500;
     options.num_threads = std::max(1u, std::thread::hardware_concurrency());
     options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
-    IterationDataSaverCallback callback(&problem_data);
-    options.callbacks.push_back(&callback);
+    // IterationDataSaverCallback callback(&problem_data);
+    // options.callbacks.push_back(&callback);
     options.update_state_every_iteration = true;
 
     ceres::Solver::Summary summary;
